@@ -5,7 +5,14 @@ import os
 from collections import defaultdict
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
-from presidio_anonymizer.entities import RecognizerResult, OperatorConfig
+from presidio_anonymizer.entities import OperatorConfig
+import nltk
+
+# Ensure necessary NLTK data is downloaded
+nltk.download('punkt')
+nltk.download('averaged_perceptron_tagger')
+nltk.download('maxent_ne_chunker')
+nltk.download('words')
 
 # Load SpaCy model
 nlp = spacy.load("en_core_web_sm")
@@ -25,7 +32,7 @@ def redact_names(text, stats):
     return redacted_text
 
 def redact_dates(text, stats):
-    date_pattern = r'\b(\d{1,2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}\s[A-Za-z]+\s\d{4}|[A-Za-z]+\s\d{1,2},?\s\d{4}|\d{4}[-/]\d{2}[-/]\d{2})\b'
+    date_pattern = r'\b(\d{1,2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}\s[A-Za-z]+\s\d{4}|[A-Za-z]+\s\d{1,2},?\s\d{4}|\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}/\d{1,2}/\d{1,2})\b'
     redacted_text = text
     matches = re.finditer(date_pattern, redacted_text)
     for match in matches:
@@ -47,44 +54,28 @@ def redact_phones(text, stats):
     return anonymized_text.text
 
 def redact_addresses_with_security_stamps(text, stats):
-    # Define the address regex pattern
     address_pattern = r'\d+\s+[\w\s]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd)\.?'
     
-    # Function to replace address with '█' characters of the same length
     def redact_address(match):
         address = match.group(0)
         stats['addresses'] += 1
         return '█' * len(address)
 
-    # Replace matched addresses with '█' characters
     redacted_text = re.sub(address_pattern, redact_address, text)
-
     return redacted_text
 
 def redact_concepts(text, concepts, stats):
-    doc = nlp(text)
-    analyzer_results = []
-    for sent in doc.sents:
-        for concept in concepts:
-            if concept.lower() in sent.text.lower():
-                analyzer_results.append(
-                    RecognizerResult(
-                        entity_type="CONCEPT",
-                        start=sent.start_char,
-                        end=sent.end_char,
-                        score=1.0
-                    )
-                )
-                stats['concepts'] += 1
-                break  # Move to the next sentence after finding a match
+    sentences = nltk.sent_tokenize(text)
+    
+    redacted_text = []
+    for sentence in sentences:
+        if any(concept.lower() in sentence.lower() for concept in concepts):
+            redacted_text.append('█' * len(sentence))
+            stats['concepts'] += 1
+        else:
+            redacted_text.append(sentence)
 
-    operator_config = OperatorConfig("replace", {"new_value": "█" * 10})
-    anonymized_text = anonymizer.anonymize(
-        text=text,
-        analyzer_results=analyzer_results,
-        operators={"CONCEPT": operator_config}
-    )
-    return anonymized_text.text
+    return ' '.join(redacted_text)
 
 def process_file(input_file, output_file, redact_flags, concepts, stats):
     with open(input_file, 'r', encoding='utf-8') as file:
