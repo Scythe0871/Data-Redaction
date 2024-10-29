@@ -5,43 +5,33 @@ import os
 from collections import defaultdict
 from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
-from presidio_anonymizer.entities import OperatorConfig
+from presidio_anonymizer.entities import RecognizerResult, OperatorConfig
 
 # Load SpaCy model
 nlp = spacy.load("en_core_web_sm")
 
-# Initialize Presidio engines for phone number redaction
+# Initialize Presidio engines
 analyzer = AnalyzerEngine()
 anonymizer = AnonymizerEngine()
 
 def redact_names(text, stats):
-    # Process the text
     doc = nlp(text)
-    
-    # Redact names and locations
     redacted_text = text
     for ent in doc.ents:
         if ent.label_ in ["PERSON", "GPE"]:
             redacted_text = redacted_text.replace(ent.text, "█" * len(ent.text))
             if ent.label_ == "PERSON" or "GPE":
                 stats['names'] += 1
-            # elif ent.label_ == "GPE":
-            #     stats['locations'] += 1
-    
     return redacted_text
 
 def redact_dates(text, stats):
     date_pattern = r'\b(\d{1,2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}\s[A-Za-z]+\s\d{4}|[A-Za-z]+\s\d{1,2},?\s\d{4}|\d{4}[-/]\d{2}[-/]\d{2})\b'
     redacted_text = text
-
-    # Find matches and redact
     matches = re.finditer(date_pattern, redacted_text)
     for match in matches:
         date_string = match.group()
-        # Replace with redaction character
         redacted_text = redacted_text.replace(date_string, '█' * len(date_string))
         stats['dates'] += 1
-
     return redacted_text
 
 def redact_phones(text, stats):
@@ -57,20 +47,44 @@ def redact_phones(text, stats):
     return anonymized_text.text
 
 def redact_addresses_with_security_stamps(text, stats):
-    # Placeholder for Security Stamps address redaction
-    # This should be replaced with the actual Security Stamps implementation
+    # Define the address regex pattern
     address_pattern = r'\d+\s+[\w\s]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd)\.?'
-    redacted_text = re.sub(address_pattern, '[REDACTED ADDRESS]', text)
-    stats['addresses'] += len(re.findall(address_pattern, text))
+    
+    # Function to replace address with '█' characters of the same length
+    def redact_address(match):
+        address = match.group(0)
+        stats['addresses'] += 1
+        return '█' * len(address)
+
+    # Replace matched addresses with '█' characters
+    redacted_text = re.sub(address_pattern, redact_address, text)
+
     return redacted_text
 
-def redact_concepts(doc, concepts, stats):
-    redacted = doc.text
+def redact_concepts(text, concepts, stats):
+    doc = nlp(text)
+    analyzer_results = []
     for sent in doc.sents:
-        if any(concept in sent.text.lower() for concept in concepts):
-            redacted = redacted.replace(sent.text, "█" * len(sent.text))
-            stats['concepts'] += 1
-    return redacted
+        for concept in concepts:
+            if concept.lower() in sent.text.lower():
+                analyzer_results.append(
+                    RecognizerResult(
+                        entity_type="CONCEPT",
+                        start=sent.start_char,
+                        end=sent.end_char,
+                        score=1.0
+                    )
+                )
+                stats['concepts'] += 1
+                break  # Move to the next sentence after finding a match
+
+    operator_config = OperatorConfig("replace", {"new_value": "█" * 10})
+    anonymized_text = anonymizer.anonymize(
+        text=text,
+        analyzer_results=analyzer_results,
+        operators={"CONCEPT": operator_config}
+    )
+    return anonymized_text.text
 
 def process_file(input_file, output_file, redact_flags, concepts, stats):
     with open(input_file, 'r', encoding='utf-8') as file:
@@ -87,7 +101,7 @@ def process_file(input_file, output_file, redact_flags, concepts, stats):
     if 'address' in redact_flags:
         redacted_text = redact_addresses_with_security_stamps(redacted_text, stats)
     if concepts:
-        redacted_text = redact_concepts(nlp(redacted_text), concepts, stats)
+        redacted_text = redact_concepts(redacted_text, concepts, stats)
 
     with open(output_file, 'w', encoding='utf-8') as file:
         file.write(redacted_text)
