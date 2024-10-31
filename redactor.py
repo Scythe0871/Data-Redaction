@@ -2,109 +2,98 @@ import spacy
 import re
 import argparse
 import os
+import sys
 from collections import defaultdict
-from presidio_analyzer import AnalyzerEngine
-from presidio_anonymizer import AnonymizerEngine
-from presidio_anonymizer.entities import OperatorConfig
-import nltk
 
-# Ensure necessary NLTK data is downloaded
-nltk.download('punkt')
-nltk.download('averaged_perceptron_tagger')
-nltk.download('maxent_ne_chunker')
-nltk.download('words')
 
-# Load SpaCy model
-nlp = spacy.load("en_core_web_sm")
+nlp = spacy.load("en_core_web_lg")
 
-# Initialize Presidio engines
-analyzer = AnalyzerEngine()
-anonymizer = AnonymizerEngine()
-
-def redact_names(text, stats):
-    doc = nlp(text)
-    redacted_text = text
+def redact_names(doc, stats):
+    redacted_text = doc.text
     for ent in doc.ents:
-        if ent.label_ in ["PERSON", "GPE"]:
+        if ent.label_ == "PERSON":
             redacted_text = redacted_text.replace(ent.text, "█" * len(ent.text))
-            if ent.label_ == "PERSON" or "GPE":
-                stats['names'] += 1
+            stats['names'] += 1
     return redacted_text
 
 def redact_dates(text, stats):
     date_pattern = r'\b(\d{1,2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}\s[A-Za-z]+\s\d{4}|[A-Za-z]+\s\d{1,2},?\s\d{4}|\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}/\d{1,2}/\d{1,2})\b'
-    redacted_text = text
-    matches = re.finditer(date_pattern, redacted_text)
-    for match in matches:
-        date_string = match.group()
-        redacted_text = redacted_text.replace(date_string, '█' * len(date_string))
-        stats['dates'] += 1
+    redacted_text = re.sub(date_pattern, lambda m: "█" * len(m.group()), text)
+    stats['dates'] += len(re.findall(date_pattern, text))
     return redacted_text
 
 def redact_phones(text, stats):
-    results = analyzer.analyze(text=text, language='en')
-    phone_results = [result for result in results if result.entity_type == 'PHONE_NUMBER']
-    operator_config = OperatorConfig("replace", {"new_value": "█" * 10})
-    anonymized_text = anonymizer.anonymize(
-        text=text,
-        analyzer_results=phone_results,
-        operators={"PHONE_NUMBER": operator_config}
-    )
-    stats['phones'] += len(phone_results)
-    return anonymized_text.text
-
-def redact_addresses_with_security_stamps(text, stats):
-    address_pattern = r'\d+\s+[\w\s]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd)\.?'
-    
-    def redact_address(match):
-        address = match.group(0)
-        stats['addresses'] += 1
-        return '█' * len(address)
-
-    redacted_text = re.sub(address_pattern, redact_address, text)
+    phone_pattern = r'\b(\+\d{1,2}\s?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|\d{5}-\d{5}\b'
+    redacted_text = re.sub(phone_pattern, lambda m: "█" * len(m.group()), text)
+    stats['phones'] += len(re.findall(phone_pattern, text))
     return redacted_text
 
-def redact_concepts(text, concepts, stats):
-    sentences = nltk.sent_tokenize(text)
+def redact_addresses(text, stats):
+    address_pattern = r'\d+\s+[\w\s]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd)\.?|\d{4}\s[A-Z]{2}\s\d{2}[a-z]{2}\s[A-Z][a-z]'
+    redacted_text = re.sub(address_pattern, lambda m: "█" * len(m.group()),text)
+    stats['addresses'] += len(re.findall(address_pattern, text))
+    return redacted_text
     
+    # for sent in doc.sents:
+    #     if re.search(address_pattern, sent.text, re.IGNORECASE):
+    #         redacted_text.append('█' * len(sent.text))
+    #         stats['addresses'] += 1
+    #     else:
+    #         redacted_text.append(sent.text)
+    
+    # return ' '.join(redacted_text)
+
+def redact_concepts(doc, concepts, stats):
     redacted_text = []
-    for sentence in sentences:
-        if any(concept.lower() in sentence.lower() for concept in concepts):
-            redacted_text.append('█' * len(sentence))
+    for sent in doc.sents:
+        if any(concept.lower() in sent.text.lower() for concept in concepts):
+            redacted_text.append('█' * len(sent.text))
             stats['concepts'] += 1
         else:
-            redacted_text.append(sentence)
-
+            redacted_text.append(sent.text)
     return ' '.join(redacted_text)
 
 def process_file(input_file, output_file, redact_flags, concepts, stats):
-    with open(input_file, 'r', encoding='utf-8') as file:
-        text = file.read()
+    try:
+        with open(input_file, 'r', encoding='utf-8') as file:
+            text = file.read()
+    except FileNotFoundError:
+        print(f"Error: Input file '{input_file}' not found.")
+        sys.exit(1)
     
+    doc = nlp(text)
     redacted_text = text
 
     if 'names' in redact_flags:
-        redacted_text = redact_names(redacted_text, stats)
+        redacted_text = redact_names(doc, stats)
     if 'dates' in redact_flags:
         redacted_text = redact_dates(redacted_text, stats)
     if 'phones' in redact_flags:
         redacted_text = redact_phones(redacted_text, stats)
     if 'address' in redact_flags:
-        redacted_text = redact_addresses_with_security_stamps(redacted_text, stats)
+        redacted_text = redact_addresses(redacted_text, stats)
     if concepts:
-        redacted_text = redact_concepts(redacted_text, concepts, stats)
+        redacted_text = redact_concepts(nlp(redacted_text), concepts, stats)
 
-    with open(output_file, 'w', encoding='utf-8') as file:
-        file.write(redacted_text)
+    try:
+        with open(output_file, 'w', encoding='utf-8') as file:
+            file.write(redacted_text)
+    except IOError:
+        print(f"Error: Unable to write to output file '{output_file}'.")
+        sys.exit(1)
 
 def write_stats(stats, stats_file):
-    with open(stats_file, 'w') as f:
-        for key, value in stats.items():
-            f.write(f"{key}: {value}\n")
+    try:
+        with open(stats_file, 'w') as f:
+            for key, value in stats.items():
+                f.write(f"{key}: {value}\n")
+    except IOError:
+        print(f"Error: Unable to write to stats file '{stats_file}'.")
+        sys.exit(1)
 
 def main():
     parser = argparse.ArgumentParser(description="Redact sensitive information from text files.")
-    parser.add_argument("--names", action="store_true", help="Redact names and locations")
+    parser.add_argument("--names", action="store_true", help="Redact names")
     parser.add_argument("--dates", action="store_true", help="Redact dates")
     parser.add_argument("--phones", action="store_true", help="Redact phone numbers")
     parser.add_argument("--address", action="store_true", help="Redact addresses")
@@ -134,7 +123,6 @@ def main():
     process_file(input_file, output_file, redact_flags, args.concept, stats)
 
     if args.stats == "stderr":
-        import sys
         for key, value in stats.items():
             print(f"{key}: {value}", file=sys.stderr)
     elif args.stats == "stdout":
