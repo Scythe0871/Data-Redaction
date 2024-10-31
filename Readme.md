@@ -137,9 +137,8 @@ The statistics output includes:
   - End index in the original text
   - Original content that was redacted
 
-## Notes
+## Assumption and Limitations
 
-- The script currently assumes that the input file is UTF-8 encoded.
 - The address redaction may not catch all possible address formats. Adjust the regex pattern in `redact_addresses` if needed.
 - Concept redaction works on a sentence level, so it may redact more text than strictly necessary if the concept word appears in a long sentence.
 
