@@ -5,7 +5,7 @@ setup(
 	version='1.0',
 	author='Abhiram Chandra Reddy Veluru',
 	authour_email='ab.veluru@ufl.edu',
-	packages=find_packages(exclude=('tests', 'docs')),
+	packages=find_packages(exclude=('docs')),
 	setup_requires=['pytest-runner'],
 	tests_require=['pytest']	
 )
