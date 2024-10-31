@@ -1,4 +1,4 @@
-import pytest
+# import pytest
 import spacy
 from collections import defaultdict
 
@@ -49,5 +49,5 @@ def test_redact_concepts():
     assert stats['concepts'] == 2
 
 # Run all tests
-if __name__ == "__main__":
-    pytest.main([__file__])
+# if __name__ == "__main__":
+#     pytest.main([__file__])
