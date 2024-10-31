@@ -5,8 +5,8 @@ import os
 import sys
 from collections import defaultdict
 
-
-nlp = spacy.load("en_core_web_lg")
+import en_core_web_lg
+nlp = en_core_web_lg.load()
 
 def redact_names(doc, stats):
     redacted_text = doc.text

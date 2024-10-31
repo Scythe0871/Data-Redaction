@@ -1,9 +1,9 @@
 # import pytest
 import spacy
 from collections import defaultdict
+import en_core_web_lg
 
-# Load SpaCy model
-nlp = spacy.load("en_core_web_lg")
+nlp = en_core_web_lg.load()
 
 # Import the functions from your main script
 from redactor import redact_names, redact_dates, redact_phones, redact_addresses, redact_concepts
